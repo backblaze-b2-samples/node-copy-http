@@ -1,0 +1,11 @@
+# Project exclude paths
+/venv/
+node_modules
+.DS_Store
+.env
+.idea
+*.iml
+risingcloud.yaml
+risingcloud_project.zip
+request.json
+response.json
