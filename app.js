@@ -22,8 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
-import pkg from 'aws-sdk';
-const {Endpoint, S3} = pkg;
+import {DeleteObjectCommand, HeadObjectCommand, S3Client} from '@aws-sdk/client-s3';
+import {Upload} from '@aws-sdk/lib-storage';
 
 import stream from "stream";
 import fs from 'fs';
@@ -44,6 +44,10 @@ const ENV_VARS = [
   "PART_SIZE"
 ];
 
+const REGION_SOURCE = '[a-z]{2}(?:-[a-z]+)+-\\d+';
+const REGION_PATTERN = new RegExp(`^${REGION_SOURCE}$`);
+const S3_ENDPOINT_REGION_PATTERN = new RegExp(`^s3[.-](${REGION_SOURCE})\\.`);
+
 function checkEnvVars(env_vars) {
   // make sure the environment variables are set
   try {
@@ -59,15 +63,36 @@ function checkEnvVars(env_vars) {
   }
 }
 
+function getRegion(endpoint, configuredRegion) {
+  const region = configuredRegion || endpoint.match(S3_ENDPOINT_REGION_PATTERN)?.[1] || 'us-east-1';
+
+  if (!REGION_PATTERN.test(region)) {
+    throw new Error(`Invalid S3 region: ${region}`);
+  }
+
+  return region;
+}
+
+function createS3Client(endpoint, accessKeyId, secretAccessKey, configuredRegion) {
+  return new S3Client({
+    endpoint: 'https://' + endpoint,
+    region: getRegion(endpoint, configuredRegion),
+    credentials: {
+      accessKeyId,
+      secretAccessKey
+    }
+  });
+}
+
 function copyFile(key, cacheDomain, dstService, dstBucket) {
   const srcUrl = `https://${cacheDomain}/${key}`;
   const headers = {'X-No-Copy': "1"};
 
   // Don't overwrite the object if it's already there!
-  return dstService.headObject({
+  return dstService.send(new HeadObjectCommand({
     Bucket: dstBucket,
     Key: key
-  }).promise().then(
+  })).then(
       _ => {
         throw new Error(`Object ${key} already exists in bucket ${dstBucket}`);
       },
@@ -89,7 +114,11 @@ function copyFile(key, cacheDomain, dstService, dstBucket) {
         Array.from(srcObjectInfo.headers.entries()).filter(([key]) => key.startsWith('x-amz-meta-'))
     );
 
-    const promise = dstService.upload({
+    const upload = new Upload({
+      client: dstService,
+      queueSize: parseInt(process.env.QUEUE_SIZE),
+      partSize: parseInt(process.env.PART_SIZE),
+      params: {
       Bucket: dstBucket,
       Key: key,
       Body: writeStream,
@@ -106,12 +135,12 @@ function copyFile(key, cacheDomain, dstService, dstBucket) {
       ObjectLockMode: srcObjectInfo.headers.get('x-amz-object-lock-mode'),
       ObjectLockRetainUntilDate: srcObjectInfo.headers.get('x-amz-object-lock-retain-until-date'),
       ObjectLockLegalHoldStatus: srcObjectInfo.headers.get('x-amz-object-lock-legal-hold')
-    }, {
-      queueSize: parseInt(process.env.QUEUE_SIZE),
-      partSize: parseInt(process.env.PART_SIZE)
-    }).on('httpUploadProgress', function (progress) {
+      }
+    });
+
+    const promise = upload.on('httpUploadProgress', function (progress) {
       console.log(key, `${progress.loaded}/${srcObjectInfo.headers.get('content-length')} bytes copied`);
-    }).promise();
+    }).done();
 
     fetch(srcUrl, {
       headers: headers
@@ -127,10 +156,10 @@ function copyFile(key, cacheDomain, dstService, dstBucket) {
 function deleteFile(key, service, bucket) {
   console.log(`Deleting ${key} from ${bucket}`);
 
-  return service.deleteObject({
+  return service.send(new DeleteObjectCommand({
     Bucket: bucket,
     Key: key
-  }).promise();
+  }));
 }
 
 (async() => {
@@ -140,17 +169,19 @@ function deleteFile(key, service, bucket) {
 
   checkEnvVars(ENV_VARS);
 
-  const srcService = new S3({
-    endpoint: new Endpoint('https://' + process.env.SRC_ENDPOINT),
-    secretAccessKey: process.env.SRC_SECRET_KEY,
-    accessKeyId: process.env.SRC_ACCESS_KEY
-  });
+  const srcService = createS3Client(
+      process.env.SRC_ENDPOINT,
+      process.env.SRC_ACCESS_KEY,
+      process.env.SRC_SECRET_KEY,
+      process.env.SRC_REGION
+  );
 
-  const dstService = new S3({
-    endpoint: new Endpoint('https://' + process.env.DST_ENDPOINT),
-    secretAccessKey: process.env.DST_SECRET_KEY,
-    accessKeyId: process.env.DST_ACCESS_KEY
-  });
+  const dstService = createS3Client(
+      process.env.DST_ENDPOINT,
+      process.env.DST_ACCESS_KEY,
+      process.env.DST_SECRET_KEY,
+      process.env.DST_REGION
+  );
 
   let rawdata = fs.readFileSync('./request.json').toString();
   console.log(`Request: ${rawdata}`);
