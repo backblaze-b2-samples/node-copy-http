@@ -44,7 +44,9 @@ const ENV_VARS = [
   "PART_SIZE"
 ];
 
-const REGION_PATTERN = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
+const REGION_SOURCE = '[a-z]{2}(?:-[a-z]+)+-\\d+';
+const REGION_PATTERN = new RegExp(`^${REGION_SOURCE}$`);
+const S3_ENDPOINT_REGION_PATTERN = new RegExp(`^s3[.-](${REGION_SOURCE})\\.`);
 
 function checkEnvVars(env_vars) {
   // make sure the environment variables are set
@@ -62,7 +64,7 @@ function checkEnvVars(env_vars) {
 }
 
 function getRegion(endpoint, configuredRegion) {
-  const region = configuredRegion || endpoint.match(/^s3[.-]([a-z]{2}-[a-z]+-\d+)\./)?.[1] || 'us-east-1';
+  const region = configuredRegion || endpoint.match(S3_ENDPOINT_REGION_PATTERN)?.[1] || 'us-east-1';
 
   if (!REGION_PATTERN.test(region)) {
     throw new Error(`Invalid S3 region: ${region}`);
