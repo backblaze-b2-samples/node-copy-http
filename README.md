@@ -40,7 +40,7 @@ risingcloud init -s $YOUR_TASK_NAME
 ```yaml
 from: ubuntu:22.04
 deps:
-  - curl -sL https://deb.nodesource.com/setup_18.x -o nodesource_setup.sh
+  - curl -sL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh
   - bash nodesource_setup.sh
   - apt-get install -y nodejs
   - bash -c "(cd node-risingcloud/task; npm install)"
